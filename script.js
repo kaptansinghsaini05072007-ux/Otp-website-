@@ -12,19 +12,98 @@ class OTPService {
     }
     
     async init() {
+        // First check if API is working
+        await this.testAPI();
         await this.loadCountries();
         this.setupEventListeners();
         this.updateBalanceDisplay();
     }
     
-    setupEventListeners() {
-        document.getElementById('countrySelect').addEventListener('change', (e) => {
-            this.onCountryChange(e.target.value);
-        });
+    async testAPI() {
+        try {
+            const response = await this.makeRequest('user/profile', 'GET', true);
+            console.log('API Test Successful:', response);
+            this.showNotification('✅ API Connected Successfully', 'success');
+        } catch (error) {
+            console.error('API Test Failed:', error);
+            this.showNotification('❌ API Connection Failed - Using Demo Mode', 'error');
+        }
+    }
+    
+    async makeRequest(endpoint, method = 'GET', auth = false) {
+        const url = this.baseURL + endpoint;
         
-        document.getElementById('serviceSelect').addEventListener('change', (e) => {
-            this.onServiceChange(e.target.value);
-        });
+        const headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        };
+        
+        if (auth) {
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+        }
+        
+        try {
+            console.log(`Making API request to: ${url}`);
+            
+            const response = await fetch(url, {
+                method: method,
+                headers: headers,
+                // mode: 'cors' // Remove this line
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            console.log(`API Response for ${endpoint}:`, data);
+            return data;
+            
+        } catch (error) {
+            console.error(`API Request failed for ${endpoint}:`, error);
+            
+            // If CORS error, try with proxy
+            if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+                return await this.makeRequestWithProxy(endpoint, method, auth);
+            }
+            
+            throw error;
+        }
+    }
+    
+    async makeRequestWithProxy(endpoint, method = 'GET', auth = false) {
+        // Use CORS proxy
+        const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+        const url = proxyUrl + this.baseURL + endpoint;
+        
+        const headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        };
+        
+        if (auth) {
+            headers['Authorization'] = `Bearer ${this.apiKey}`;
+            headers['X-Requested-With'] = 'XMLHttpRequest';
+        }
+        
+        try {
+            console.log(`Making proxied API request to: ${url}`);
+            
+            const response = await fetch(url, {
+                method: method,
+                headers: headers
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            return await response.json();
+            
+        } catch (error) {
+            console.error(`Proxied API Request failed for ${endpoint}:`, error);
+            throw new Error('Service temporarily unavailable. Please try again.');
+        }
     }
     
     async loadCountries() {
@@ -51,7 +130,10 @@ class OTPService {
     }
     
     loadDemoCountries() {
-        const demoCountries = ['india', 'usa', 'uk', 'russia', 'brazil', 'indonesia'];
+        const demoCountries = [
+            'india', 'usa', 'uk', 'russia', 'brazil', 
+            'indonesia', 'vietnam', 'thailand', 'philippines', 'malaysia'
+        ];
         const countrySelect = document.getElementById('countrySelect');
         countrySelect.innerHTML = '<option value="">Select Country</option>';
         
@@ -74,7 +156,7 @@ class OTPService {
         try {
             const services = await this.loadServices(country);
             this.populateServices(services, country);
-            this.loadOperators(country);
+            await this.loadOperators(country);
         } catch (error) {
             console.error('Error loading services:', error);
             this.loadDemoServices(country);
@@ -82,8 +164,36 @@ class OTPService {
     }
     
     async loadServices(country) {
-        const response = await this.makeRequest(`guest/products/${country}`);
-        return response;
+        try {
+            const response = await this.makeRequest(`guest/products/${country}`);
+            return response;
+        } catch (error) {
+            // If guest endpoint fails, try vendor endpoint
+            try {
+                const response = await this.makeRequest(`vendor/prices?country=${country}`, 'GET', true);
+                return this.transformVendorPricesToServices(response, country);
+            } catch (vendorError) {
+                throw error; // Throw original error
+            }
+        }
+    }
+    
+    transformVendorPricesToServices(vendorData, country) {
+        const services = {};
+        
+        if (vendorData.Prices && Array.isArray(vendorData.Prices)) {
+            vendorData.Prices.forEach(price => {
+                if (price.CountryName === country) {
+                    services[price.ProductName] = {
+                        Category: 'activation',
+                        Qty: price.Count,
+                        Price: price.Price
+                    };
+                }
+            });
+        }
+        
+        return services;
     }
     
     populateServices(servicesData, country) {
@@ -98,6 +208,10 @@ class OTPService {
                 serviceSelect.appendChild(option);
             }
         });
+        
+        if (serviceSelect.options.length === 1) {
+            serviceSelect.innerHTML = '<option value="">No services available</option>';
+        }
     }
     
     loadDemoServices(country) {
@@ -107,7 +221,9 @@ class OTPService {
             'telegram': 'Telegram',
             'google': 'Google',
             'twitter': 'Twitter',
-            'instagram': 'Instagram'
+            'instagram': 'Instagram',
+            'tiktok': 'TikTok',
+            'discord': 'Discord'
         };
         
         const serviceSelect = document.getElementById('serviceSelect');
@@ -123,10 +239,15 @@ class OTPService {
     
     async loadOperators(country) {
         try {
-            const response = await this.makeRequest(`guest/prices?country=${country}`);
-            this.populateOperators(response, country);
+            const serviceSelect = document.getElementById('serviceSelect');
+            if (serviceSelect.options.length > 1) {
+                const firstService = serviceSelect.options[1].value;
+                const response = await this.makeRequest(`guest/prices?country=${country}&product=${firstService}`);
+                this.populateOperators(response, country);
+            }
         } catch (error) {
             console.error('Error loading operators:', error);
+            this.loadDemoOperators();
         }
     }
     
@@ -147,6 +268,21 @@ class OTPService {
         }
     }
     
+    loadDemoOperators() {
+        const demoOperators = ['virtual1', 'virtual2', 'virtual3', 'any'];
+        const operatorSelect = document.getElementById('operatorSelect');
+        operatorSelect.innerHTML = '<option value="any">Any Operator</option>';
+        
+        demoOperators.forEach(operator => {
+            if (operator !== 'any') {
+                const option = document.createElement('option');
+                option.value = operator;
+                option.textContent = this.formatOperatorName(operator);
+                operatorSelect.appendChild(option);
+            }
+        });
+    }
+    
     async onServiceChange(service) {
         const country = document.getElementById('countrySelect').value;
         if (!country || !service) {
@@ -164,24 +300,42 @@ class OTPService {
     }
     
     async getServicePrice(country, service) {
-        const operator = document.getElementById('operatorSelect').value;
-        let endpoint = `guest/prices?country=${country}&product=${service}`;
-        
-        const response = await this.makeRequest(endpoint);
-        
-        if (response[country] && response[country][service]) {
-            const operators = response[country][service];
+        try {
+            const operator = document.getElementById('operatorSelect').value;
+            let endpoint = `guest/prices?country=${country}&product=${service}`;
             
-            if (operator !== 'any' && operators[operator]) {
-                return operators[operator].cost;
+            const response = await this.makeRequest(endpoint);
+            
+            if (response[country] && response[country][service]) {
+                const operators = response[country][service];
+                
+                if (operator !== 'any' && operators[operator]) {
+                    return operators[operator].cost;
+                }
+                
+                // Get the first available operator's price
+                const firstOperator = Object.keys(operators)[0];
+                return operators[firstOperator]?.cost || 2;
             }
             
-            // Get the first available operator's price
-            const firstOperator = Object.keys(operators)[0];
-            return operators[firstOperator]?.cost || 1;
+            return 2; // Default price
+            
+        } catch (error) {
+            // If guest prices fail, try vendor prices
+            try {
+                const vendorResponse = await this.makeRequest('vendor/prices', 'GET', true);
+                if (vendorResponse.Prices && Array.isArray(vendorResponse.Prices)) {
+                    const servicePrice = vendorResponse.Prices.find(
+                        p => p.CountryName === country && p.ProductName === service
+                    );
+                    return servicePrice ? servicePrice.Price : 2;
+                }
+            } catch (vendorError) {
+                console.error('Vendor prices also failed:', vendorError);
+            }
+            
+            return 2; // Default price
         }
-        
-        return 1; // Default price
     }
     
     showPrice(originalPrice) {
@@ -218,7 +372,7 @@ class OTPService {
         const operator = document.getElementById('operatorSelect').value;
         
         if (!country || !service) {
-            alert('Please select country and service');
+            this.showNotification('Please select country and service', 'error');
             return;
         }
         
@@ -240,9 +394,11 @@ class OTPService {
             this.showOrderStatus();
             this.startSMSPolling();
             
+            this.showNotification('✅ Number purchased successfully!', 'success');
+            
         } catch (error) {
             console.error('Error buying number:', error);
-            alert('Failed to buy number: ' + (error.message || 'Service unavailable'));
+            this.showNotification('Failed to buy number: ' + (error.message || 'Service unavailable'), 'error');
         } finally {
             buyButton.disabled = false;
             buyButton.textContent = 'Buy Number';
@@ -280,6 +436,7 @@ class OTPService {
                 const latestSMS = orderInfo.sms[orderInfo.sms.length - 1];
                 this.displaySMS(latestSMS);
                 clearInterval(this.pollInterval);
+                this.showNotification('✅ SMS Received!', 'success');
             }
         } catch (error) {
             console.error('Error checking SMS:', error);
@@ -303,35 +460,11 @@ class OTPService {
         }
         this.currentOrder = null;
         document.getElementById('orderStatus').classList.add('hidden');
+        this.showNotification('Order closed', 'info');
     }
     
     updateBalanceDisplay() {
         document.getElementById('userBalance').textContent = this.userBalance.toFixed(2);
-    }
-    
-    async makeRequest(endpoint, method = 'GET', auth = false) {
-        // Use proxy to avoid CORS issues
-        const url = '/api/' + endpoint;
-        
-        const headers = {
-            'Accept': 'application/json'
-        };
-        
-        try {
-            const response = await fetch(url, {
-                method: method,
-                headers: headers
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            return await response.json();
-        } catch (error) {
-            console.error(`API Request failed for ${endpoint}:`, error);
-            throw error;
-        }
     }
     
     formatCountryName(country) {
@@ -355,6 +488,40 @@ class OTPService {
         if (smsInbox) {
             smsInbox.innerHTML = `<div class="error">${message}</div>`;
         }
+    }
+    
+    showNotification(message, type = 'info') {
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 5px;
+            color: white;
+            font-weight: bold;
+            z-index: 1000;
+            max-width: 300px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        `;
+        
+        if (type === 'success') {
+            notification.style.background = '#4CAF50';
+        } else if (type === 'error') {
+            notification.style.background = '#e74c3c';
+        } else {
+            notification.style.background = '#3498db';
+        }
+        
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        
+        // Remove after 5 seconds
+        setTimeout(() => {
+            notification.remove();
+        }, 5000);
     }
 }
 
