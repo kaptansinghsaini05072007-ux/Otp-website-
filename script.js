@@ -1,5 +1,6 @@
 class OTPService {
     constructor() {
+        // API Key already set
         this.apiKey = 'eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTQyMDk4NjQsImlhdCI6MTc2MjY3Mzg2NCwicmF5IjoiOTMwN2EwYTk3ZTBlODEzYjM1NzJkMWJlNGI5YzFlNjQiLCJzdWIiOjMwOTA0Mzl9.DSBVHlWaSFPHLdfRYquEXaI5-1K7DFMG7s7N4W3qHumEy7YYpfmnG6RxgaIgOwgFlGsu4JPA4P_fUw6JvTizOhlbo75TT2-H1Z-8cF44meKBa0jr1CjvjEmwV3a6okY02UgEDGx9fHQIRegBNCG2okHoCWJWBJ1RCUu-vCcDl7c4CAQagNmCkfDNzx8JXDG3iHYir_gOROzxf9HUlC5dbzNze9IhuPce64SLGPls60wfD2W8D4XeoNc1uay0KqmcdWGrACn1zLNzFZPnYqs5cWtByLRwFqN-kwm1BwtqI8mP-ZK5-66qqhakP7K96N0ocmFGLnCa-5a4e0fTMTGQZw';
         this.baseURL = 'https://5sim.net/v1/';
         this.currentOrder = null;
@@ -309,14 +310,12 @@ class OTPService {
     }
     
     async makeRequest(endpoint, method = 'GET', auth = false) {
-        const url = this.baseURL + endpoint;
+        // Use proxy to avoid CORS issues
+        const url = '/api/' + endpoint;
+        
         const headers = {
             'Accept': 'application/json'
         };
-        
-        if (auth) {
-            headers['Authorization'] = `Bearer ${this.apiKey}`;
-        }
         
         try {
             const response = await fetch(url, {
